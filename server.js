@@ -8,7 +8,7 @@ if (process.env.FIREBASE_JSON) {
     try {
         serviceAccount = JSON.parse(process.env.FIREBASE_JSON);
     } catch (error) {
-        console.error("⚠️ Erro ao ler o texto do Firebase nas variáveis:", error);
+        console.error("⚠️ Erro ao ler a chave:", error);
     }
 }
 
@@ -19,7 +19,7 @@ if (serviceAccount) {
         databaseURL: "https://seofast-3b0ab-default-rtdb.firebaseio.com"
     });
     db = admin.database();
-    console.log("✅ Super Servidor conectado ao Firebase!");
+    console.log("✅ Super Servidor conectado!");
 }
 
 const app = express();
@@ -28,7 +28,6 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 app.get('/', (req, res) => res.send('🚀 Painel Master PRO - Rodando liso!'));
 
-// Caches Inteligentes
 let cacheUsuarios = {};
 let cacheEmails = {};
 
@@ -47,9 +46,10 @@ function enviarPainelAgrupado() {
     let painelAgrupado = {};
 
     for (const [idNode, dados] of Object.entries(cacheUsuarios)) {
-        // Pega as configurações (baseado na estrutura do seu Firebase)
-        let config = dados.configuracoes || dados; 
-        let email = config.email || "sem_email@cliente.com";
+        // 🔥 A CORREÇÃO DA LÓGICA: Lê o dado onde quer que ele esteja
+        let email = dados.email || (dados.configuracoes && dados.configuracoes.email) || "Sem_Email";
+        if (email === "Sem_Email") continue; // Ignora pastas vazias/lixo do banco
+
         let emailLimpo = email.replace(/\./g, '_');
 
         if (!painelAgrupado[email]) {
@@ -67,12 +67,11 @@ function enviarPainelAgrupado() {
 
         painelAgrupado[email].aparelhos.push({
             id_node: idNode,
-            nome_celular: config.nome_celular || "Celular Desconhecido",
-            ip: config.ip_rede || "IP não registrado",
-            localizacao: config.localizacao || "Desconhecida",
-            versao: config.versao_bot || "v?",
-            status_firebase: config.status || "Ativo",
-            token: config.token_sessao || "N/A"
+            nome_celular: dados.nome_celular || (dados.configuracoes && dados.configuracoes.nome_celular) || "Desconhecido",
+            ip: dados.ip_rede || (dados.configuracoes && dados.configuracoes.ip_rede) || "IP Indisponível",
+            localizacao: dados.localizacao || (dados.configuracoes && dados.configuracoes.localizacao) || "Local Desconhecido",
+            versao: dados.versao_bot || (dados.configuracoes && dados.configuracoes.versao_bot) || "v?",
+            status_firebase: dados.status || (dados.configuracoes && dados.configuracoes.status) || "Ativo"
         });
     }
 
@@ -80,34 +79,25 @@ function enviarPainelAgrupado() {
 }
 
 io.on('connection', (socket) => {
-  
   socket.on('entrar_admin', () => {
     socket.join('sala_dos_chefes');
     enviarPainelAgrupado(); 
   });
 
-  // BLOQUEIO CUSTOMIZADO
   socket.on('admin_bloquear_cliente_com_motivo', (dados) => {
-     console.log(`☠️ Banindo ${dados.id_node}. Motivo: ${dados.motivo}`);
-     // Escreve o motivo exato no Firebase!
      if (db) db.ref("Usuarios").child(dados.id_node).child("status").set(dados.motivo);
-     
      io.to(dados.email).emit('ordem_de_bloqueio');
      io.to(dados.email + '_espiando').emit('ordem_de_bloqueio');
   });
 
-  // DESBANIMENTO
   socket.on('admin_desbanir_cliente', (idNode) => {
      if (db) db.ref("Usuarios").child(idNode).child("status").set("Ativo");
   });
 
-  // ALTERAR LIMITE DE TELAS
   socket.on('admin_alterar_limite', (dados) => {
-      console.log(`⚙️ Alterando limite de ${dados.email_limpo} para ${dados.novo_limite}`);
       if (db) db.ref("EmailsAutorizados").child(dados.email_limpo).child("limite").set(parseInt(dados.novo_limite));
   });
 
-  // FUNÇÕES DO RADAR (Motor)
   socket.on('espiar_radar', (email) => {
     socket.join(email + '_espiando');
     const qtd = io.sockets.adapter.rooms.get(email)?.size || 0;
@@ -145,4 +135,4 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🔥 Super Servidor na porta ${PORT}`));
+server.listen(PORT, () => console.log(`🔥 Servidor na porta ${PORT}`));
