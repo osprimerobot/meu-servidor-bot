@@ -49,8 +49,12 @@ if (db) {
     db.ref("TravaGlobal_SeoFast").on("value", (snapshot) => {
         statusTravaGlobal = snapshot.val() || "";
         io.to('sala_dos_chefes').emit('atualizar_trava_global', statusTravaGlobal);
+        
+        // 🔥 A MÁGICA: Se a trava foi ativada, o servidor grita no megafone para TODOS os celulares!
+        if (statusTravaGlobal !== "") {
+            io.emit('ordem_trava_global_imediata', statusTravaGlobal);
+        }
     });
-}
 
 function enviarPainelAgrupado() {
     let painelAgrupado = {};
