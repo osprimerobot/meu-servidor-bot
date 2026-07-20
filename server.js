@@ -55,6 +55,7 @@ if (db) {
             io.emit('ordem_trava_global_imediata', statusTravaGlobal);
         }
     });
+} // <-- 🔥 Adicionado o fechamento correto dessa chave aqui!
 
 function enviarPainelAgrupado() {
     let painelAgrupado = {};
@@ -124,7 +125,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('admin_destravar_global', () => {
-      if (db) db.ref("TravaGlobal_SeoFast").remove();
+      // 🔥 AQUI ESTÁ A CORREÇÃO: Usando .set("") em vez de .remove()
+      if (db) db.ref("TravaGlobal_SeoFast").set("");
   });
 
   socket.on('espiar_radar', (email) => {
