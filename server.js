@@ -4,8 +4,6 @@ const { Server } = require("socket.io");
 const admin = require("firebase-admin");
 
 let serviceAccount;
-
-// 1. LÊ A CHAVE DIRETO DA MEMÓRIA DO RENDER (À PROVA DE FALHAS)
 if (process.env.FIREBASE_JSON) {
     try {
         serviceAccount = JSON.parse(process.env.FIREBASE_JSON);
@@ -18,112 +16,133 @@ let db;
 if (serviceAccount) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        databaseURL: "https://seofast-3b0ab-default-rtdb.firebaseio.com" // Seu banco!
+        databaseURL: "https://seofast-3b0ab-default-rtdb.firebaseio.com"
     });
     db = admin.database();
-    console.log("✅ Servidor Master conectado ao Firebase com sucesso!");
-} else {
-    console.log("❌ Rodando sem Firebase: Chave Mestra não encontrada nas Variáveis de Ambiente.");
+    console.log("✅ Super Servidor conectado ao Firebase!");
 }
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
-app.get('/', (req, res) => res.send('🚀 Servidor Master rodando com Integração Firebase Total!'));
+app.get('/', (req, res) => res.send('🚀 Painel Master PRO - Rodando liso!'));
 
-// Guarda as informações misturadas (HD + RAM)
-let cacheUsuariosFirebase = {};
+// Caches Inteligentes
+let cacheUsuarios = {};
+let cacheEmails = {};
 
-// Fica de olho no Firebase o tempo todo
 if (db) {
     db.ref("Usuarios").on("value", (snapshot) => {
-        if (snapshot.exists()) {
-            cacheUsuariosFirebase = snapshot.val();
-            enviarPainelParaAdmin(); // Atualiza a tela do chefe na mesma hora!
-        }
+        cacheUsuarios = snapshot.val() || {};
+        enviarPainelAgrupado();
+    });
+    db.ref("EmailsAutorizados").on("value", (snapshot) => {
+        cacheEmails = snapshot.val() || {};
+        enviarPainelAgrupado();
     });
 }
 
-// O MOTOR QUE MISTURA AS INFORMAÇÕES
-function enviarPainelParaAdmin() {
-    let painelMisto = {};
+function enviarPainelAgrupado() {
+    let painelAgrupado = {};
 
-    for (const [idNode, dados] of Object.entries(cacheUsuariosFirebase)) {
-        let email = dados.email || "Sem Email";
-        
-        // Pergunta pro radar quantas telas verdes esse e-mail tem abertas agora
-        const room = io.sockets.adapter.rooms.get(email);
-        const qtdOnline = room ? room.size : 0;
+    for (const [idNode, dados] of Object.entries(cacheUsuarios)) {
+        // Pega as configurações (baseado na estrutura do seu Firebase)
+        let config = dados.configuracoes || dados; 
+        let email = config.email || "sem_email@cliente.com";
+        let emailLimpo = email.replace(/\./g, '_');
 
-        painelMisto[idNode] = {
+        if (!painelAgrupado[email]) {
+            let limiteAtual = cacheEmails[emailLimpo] ? cacheEmails[emailLimpo].limite : 0;
+            let room = io.sockets.adapter.rooms.get(email);
+            
+            painelAgrupado[email] = {
+                email: email,
+                email_limpo: emailLimpo,
+                limite: limiteAtual,
+                total_online: room ? room.size : 0,
+                aparelhos: []
+            };
+        }
+
+        painelAgrupado[email].aparelhos.push({
             id_node: idNode,
-            email: email,
-            nome_celular: dados.nome_celular || "Desconhecido",
-            status_firebase: dados.status || "Ativo",
-            aparelhos_on: qtdOnline,
-            is_online: qtdOnline > 0 ? '🟢 ON' : '🔴 OFF'
-        };
+            nome_celular: config.nome_celular || "Celular Desconhecido",
+            ip: config.ip_rede || "IP não registrado",
+            localizacao: config.localizacao || "Desconhecida",
+            versao: config.versao_bot || "v?",
+            status_firebase: config.status || "Ativo",
+            token: config.token_sessao || "N/A"
+        });
     }
-    // Dispara a tabela completa montada pro seu painel web
-    io.to('sala_dos_chefes').emit('atualizar_painel_completo', painelMisto);
+
+    io.to('sala_dos_chefes').emit('atualizar_painel_pro', painelAgrupado);
 }
 
 io.on('connection', (socket) => {
   
   socket.on('entrar_admin', () => {
     socket.join('sala_dos_chefes');
-    enviarPainelParaAdmin(); 
+    enviarPainelAgrupado(); 
   });
 
-  socket.on('admin_bloquear_cliente', (dadosAcao) => {
-     console.log("☠️ Banindo: " + dadosAcao.email);
-     if (db) db.ref("Usuarios").child(dadosAcao.id_node).child("status").set("Banido pelo Admin");
+  // BLOQUEIO CUSTOMIZADO
+  socket.on('admin_bloquear_cliente_com_motivo', (dados) => {
+     console.log(`☠️ Banindo ${dados.id_node}. Motivo: ${dados.motivo}`);
+     // Escreve o motivo exato no Firebase!
+     if (db) db.ref("Usuarios").child(dados.id_node).child("status").set(dados.motivo);
      
-     io.to(dadosAcao.email).emit('ordem_de_bloqueio');
-     io.to(dadosAcao.email + '_espiando').emit('ordem_de_bloqueio');
+     io.to(dados.email).emit('ordem_de_bloqueio');
+     io.to(dados.email + '_espiando').emit('ordem_de_bloqueio');
   });
 
+  // DESBANIMENTO
   socket.on('admin_desbanir_cliente', (idNode) => {
-     console.log("😇 Perdoando: " + idNode);
      if (db) db.ref("Usuarios").child(idNode).child("status").set("Ativo");
   });
 
+  // ALTERAR LIMITE DE TELAS
+  socket.on('admin_alterar_limite', (dados) => {
+      console.log(`⚙️ Alterando limite de ${dados.email_limpo} para ${dados.novo_limite}`);
+      if (db) db.ref("EmailsAutorizados").child(dados.email_limpo).child("limite").set(parseInt(dados.novo_limite));
+  });
+
+  // FUNÇÕES DO RADAR (Motor)
   socket.on('espiar_radar', (email) => {
     socket.join(email + '_espiando');
-    const qtdOnline = io.sockets.adapter.rooms.get(email)?.size || 0;
-    socket.emit('atualizar_qtd', qtdOnline);
+    const qtd = io.sockets.adapter.rooms.get(email)?.size || 0;
+    socket.emit('atualizar_qtd', qtd);
   });
 
   socket.on('ligar_motor', (email) => {
     socket.join(email);
     socket.email = email;
-    const qtdOnline = io.sockets.adapter.rooms.get(email).size;
-    io.to(email).emit('atualizar_qtd', qtdOnline);
-    io.to(email + '_espiando').emit('atualizar_qtd', qtdOnline);
-    enviarPainelParaAdmin();
+    const qtd = io.sockets.adapter.rooms.get(email).size;
+    io.to(email).emit('atualizar_qtd', qtd);
+    io.to(email + '_espiando').emit('atualizar_qtd', qtd);
+    enviarPainelAgrupado();
   });
 
   socket.on('desligar_motor', () => {
     if (socket.email) {
         socket.leave(socket.email); 
-        const qtdOnline = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
-        io.to(socket.email).emit('atualizar_qtd', qtdOnline);
-        io.to(socket.email + '_espiando').emit('atualizar_qtd', qtdOnline);
-        enviarPainelParaAdmin();
+        const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
+        io.to(socket.email).emit('atualizar_qtd', qtd);
+        io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
+        enviarPainelAgrupado();
         delete socket.email; 
     }
   });
 
   socket.on('disconnect', () => {
     if (socket.email) {
-      const qtdOnline = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
-      io.to(socket.email).emit('atualizar_qtd', qtdOnline);
-      io.to(socket.email + '_espiando').emit('atualizar_qtd', qtdOnline);
-      enviarPainelParaAdmin();
+      const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
+      io.to(socket.email).emit('atualizar_qtd', qtd);
+      io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
+      enviarPainelAgrupado();
     }
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🔥 Servidor Master voando na porta ${PORT}`));
+server.listen(PORT, () => console.log(`🔥 Super Servidor na porta ${PORT}`));
