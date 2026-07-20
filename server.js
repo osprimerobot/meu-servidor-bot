@@ -30,8 +30,10 @@ app.get('/', (req, res) => res.send('🚀 Painel Master PRO - Rodando liso!'));
 
 let cacheUsuarios = {};
 let cacheEmails = {};
-// 🔥 O NOVO RADAR DE SNIPER: Guarda exatamente QUAL celular tá ligado
 let aparelhosAtivos = new Set(); 
+
+// 🔥 VARIAVEL DA TRAVA GLOBAL
+let statusTravaGlobal = "";
 
 if (db) {
     db.ref("Usuarios").on("value", (snapshot) => {
@@ -41,6 +43,12 @@ if (db) {
     db.ref("EmailsAutorizados").on("value", (snapshot) => {
         cacheEmails = snapshot.val() || {};
         enviarPainelAgrupado();
+    });
+    
+    // 🔥 FICA VIGIANDO O FIREBASE PARA SABER SE A TRAVA ESTÁ ATIVA
+    db.ref("TravaGlobal_SeoFast").on("value", (snapshot) => {
+        statusTravaGlobal = snapshot.val() || "";
+        io.to('sala_dos_chefes').emit('atualizar_trava_global', statusTravaGlobal);
     });
 }
 
@@ -73,7 +81,7 @@ function enviarPainelAgrupado() {
             localizacao: dados.localizacao || (dados.configuracoes && dados.configuracoes.localizacao) || "Local Desconhecido",
             versao: dados.versao_bot || (dados.configuracoes && dados.configuracoes.versao_bot) || "v?",
             status_firebase: dados.status || (dados.configuracoes && dados.configuracoes.status) || "Ativo",
-            is_rodando_agora: aparelhosAtivos.has(idNode) // 🔥 Descobre se ele tá no Radar Sniper
+            is_rodando_agora: aparelhosAtivos.has(idNode) 
         });
     }
 
@@ -84,19 +92,16 @@ io.on('connection', (socket) => {
   socket.on('entrar_admin', () => {
     socket.join('sala_dos_chefes');
     enviarPainelAgrupado(); 
+    socket.emit('atualizar_trava_global', statusTravaGlobal); // Manda o status da trava ao logar
   });
 
   socket.on('admin_bloquear_cliente_com_motivo', (dados) => {
-     // 1. O Render escreve o seu motivo real lá no Firebase
      if (db) db.ref("Usuarios").child(dados.id_node).child("status").set(dados.motivo);
      
-     // 2. Monta a bala de Sniper (Quem é o alvo e qual a mensagem)
      let pacoteMorte = {
          alvo_id: dados.id_node,
          motivo: dados.motivo
      };
-
-     // 3. Atira na sala do e-mail, mas agora a bala tem nome!
      io.to(dados.email).emit('ordem_de_bloqueio', pacoteMorte);
      io.to(dados.email + '_espiando').emit('ordem_de_bloqueio', pacoteMorte);
   });
@@ -109,22 +114,28 @@ io.on('connection', (socket) => {
       if (db) db.ref("EmailsAutorizados").child(dados.email_limpo).child("limite").set(parseInt(dados.novo_limite));
   });
 
+  // 🔥 EVENTOS DA TRAVA GLOBAL 🔥
+  socket.on('admin_travar_global', (motivo) => {
+      if (db) db.ref("TravaGlobal_SeoFast").set(motivo);
+  });
+
+  socket.on('admin_destravar_global', () => {
+      if (db) db.ref("TravaGlobal_SeoFast").remove();
+  });
+
   socket.on('espiar_radar', (email) => {
     socket.join(email + '_espiando');
     const qtd = io.sockets.adapter.rooms.get(email)?.size || 0;
     socket.emit('atualizar_qtd', qtd);
   });
 
-  // 🔥 O MOTOR LIGA (A MÁGICA ACONTECE AQUI)
   socket.on('ligar_motor', (dados) => {
-    // Aceita tanto o código antigo (só texto) quanto o código novo (pacote completo)
     let email = typeof dados === 'string' ? dados : dados.email;
     let id_node = typeof dados === 'string' ? null : dados.id_node;
 
     socket.join(email);
     socket.email = email;
     
-    // Se o celular enviou o ID, a gente guarda ele na mira do Sniper
     if (id_node) {
         socket.id_node = id_node;
         aparelhosAtivos.add(id_node);
@@ -139,7 +150,6 @@ io.on('connection', (socket) => {
   socket.on('desligar_motor', () => {
     if (socket.email) {
         socket.leave(socket.email); 
-        // Remove da mira do Sniper
         if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
         
         const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
@@ -152,7 +162,6 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     if (socket.email) {
-        // Remove da mira do Sniper se a internet cair
         if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
 
         const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
