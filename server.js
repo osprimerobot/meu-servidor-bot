@@ -87,9 +87,18 @@ io.on('connection', (socket) => {
   });
 
   socket.on('admin_bloquear_cliente_com_motivo', (dados) => {
+     // 1. O Render escreve o seu motivo real lá no Firebase
      if (db) db.ref("Usuarios").child(dados.id_node).child("status").set(dados.motivo);
-     io.to(dados.email).emit('ordem_de_bloqueio');
-     io.to(dados.email + '_espiando').emit('ordem_de_bloqueio');
+     
+     // 2. Monta a bala de Sniper (Quem é o alvo e qual a mensagem)
+     let pacoteMorte = {
+         alvo_id: dados.id_node,
+         motivo: dados.motivo
+     };
+
+     // 3. Atira na sala do e-mail, mas agora a bala tem nome!
+     io.to(dados.email).emit('ordem_de_bloqueio', pacoteMorte);
+     io.to(dados.email + '_espiando').emit('ordem_de_bloqueio', pacoteMorte);
   });
 
   socket.on('admin_desbanir_cliente', (idNode) => {
