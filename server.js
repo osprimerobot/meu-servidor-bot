@@ -30,6 +30,8 @@ app.get('/', (req, res) => res.send('🚀 Painel Master PRO - Rodando liso!'));
 
 let cacheUsuarios = {};
 let cacheEmails = {};
+// 🔥 O NOVO RADAR DE SNIPER: Guarda exatamente QUAL celular tá ligado
+let aparelhosAtivos = new Set(); 
 
 if (db) {
     db.ref("Usuarios").on("value", (snapshot) => {
@@ -46,9 +48,8 @@ function enviarPainelAgrupado() {
     let painelAgrupado = {};
 
     for (const [idNode, dados] of Object.entries(cacheUsuarios)) {
-        // 🔥 A CORREÇÃO DA LÓGICA: Lê o dado onde quer que ele esteja
         let email = dados.email || (dados.configuracoes && dados.configuracoes.email) || "Sem_Email";
-        if (email === "Sem_Email") continue; // Ignora pastas vazias/lixo do banco
+        if (email === "Sem_Email") continue; 
 
         let emailLimpo = email.replace(/\./g, '_');
 
@@ -71,7 +72,8 @@ function enviarPainelAgrupado() {
             ip: dados.ip_rede || (dados.configuracoes && dados.configuracoes.ip_rede) || "IP Indisponível",
             localizacao: dados.localizacao || (dados.configuracoes && dados.configuracoes.localizacao) || "Local Desconhecido",
             versao: dados.versao_bot || (dados.configuracoes && dados.configuracoes.versao_bot) || "v?",
-            status_firebase: dados.status || (dados.configuracoes && dados.configuracoes.status) || "Ativo"
+            status_firebase: dados.status || (dados.configuracoes && dados.configuracoes.status) || "Ativo",
+            is_rodando_agora: aparelhosAtivos.has(idNode) // 🔥 Descobre se ele tá no Radar Sniper
         });
     }
 
@@ -104,9 +106,21 @@ io.on('connection', (socket) => {
     socket.emit('atualizar_qtd', qtd);
   });
 
-  socket.on('ligar_motor', (email) => {
+  // 🔥 O MOTOR LIGA (A MÁGICA ACONTECE AQUI)
+  socket.on('ligar_motor', (dados) => {
+    // Aceita tanto o código antigo (só texto) quanto o código novo (pacote completo)
+    let email = typeof dados === 'string' ? dados : dados.email;
+    let id_node = typeof dados === 'string' ? null : dados.id_node;
+
     socket.join(email);
     socket.email = email;
+    
+    // Se o celular enviou o ID, a gente guarda ele na mira do Sniper
+    if (id_node) {
+        socket.id_node = id_node;
+        aparelhosAtivos.add(id_node);
+    }
+
     const qtd = io.sockets.adapter.rooms.get(email).size;
     io.to(email).emit('atualizar_qtd', qtd);
     io.to(email + '_espiando').emit('atualizar_qtd', qtd);
@@ -116,6 +130,9 @@ io.on('connection', (socket) => {
   socket.on('desligar_motor', () => {
     if (socket.email) {
         socket.leave(socket.email); 
+        // Remove da mira do Sniper
+        if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
+        
         const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
         io.to(socket.email).emit('atualizar_qtd', qtd);
         io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
@@ -126,10 +143,13 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     if (socket.email) {
-      const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
-      io.to(socket.email).emit('atualizar_qtd', qtd);
-      io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
-      enviarPainelAgrupado();
+        // Remove da mira do Sniper se a internet cair
+        if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
+
+        const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
+        io.to(socket.email).emit('atualizar_qtd', qtd);
+        io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
+        enviarPainelAgrupado();
     }
   });
 });
