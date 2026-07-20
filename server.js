@@ -2,25 +2,39 @@ const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
 const admin = require("firebase-admin");
+const fs = require('fs');
 
 // 1. INICIALIZA O COFRE DO FIREBASE
 let serviceAccount;
+
+// O Render esconde arquivos secretos na pasta /etc/secrets/
+const caminhoRender = '/etc/secrets/firebase-key.json';
+const caminhoLocal = './firebase-key.json'; // Pra caso você rode no PC depois
+
 try {
-    // O Render vai ler aquele arquivo secreto que criamos!
-    serviceAccount = require("./firebase-key.json");
+    if (fs.existsSync(caminhoRender)) {
+        serviceAccount = require(caminhoRender);
+    } else if (fs.existsSync(caminhoLocal)) {
+        serviceAccount = require(caminhoLocal);
+    } else {
+        console.error("⚠️ Arquivo firebase-key.json não encontrado no cofre do Render!");
+    }
 } catch (error) {
-    console.error("⚠️ Arquivo firebase-key.json não encontrado!");
+    console.error("⚠️ Erro ao ler a chave do Firebase:", error);
 }
 
+let db;
 if (serviceAccount) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
         databaseURL: "https://seofast-3b0ab-default-rtdb.firebaseio.com" // O link do seu banco!
     });
+    db = admin.database();
     console.log("✅ Servidor Master conectado ao Firebase com sucesso!");
+} else {
+    console.log("❌ Rodando sem Firebase: Chave Mestra não encontrada.");
 }
 
-const db = admin.database();
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
@@ -30,8 +44,8 @@ app.get('/', (req, res) => res.send('🚀 Servidor Master rodando com Integraç�
 // Guarda as informações misturadas (HD + RAM)
 let cacheUsuariosFirebase = {};
 
-// Fica de olho no Firebase o tempo todo sem gastar as vagas de clientes!
-if (serviceAccount) {
+// Fica de olho no Firebase se a conexão deu certo
+if (db) {
     db.ref("Usuarios").on("value", (snapshot) => {
         if (snapshot.exists()) {
             cacheUsuariosFirebase = snapshot.val();
@@ -76,17 +90,15 @@ io.on('connection', (socket) => {
 
   socket.on('admin_bloquear_cliente', (dadosAcao) => {
      console.log("☠️ Banindo: " + dadosAcao.email);
-     // 1. Altera no Firebase para travar pra sempre
-     if (serviceAccount) db.ref("Usuarios").child(dadosAcao.id_node).child("status").set("Banido pelo Admin");
-     // 2. Dá o tiro de sniper pra fechar o app ao vivo
+     if (db) db.ref("Usuarios").child(dadosAcao.id_node).child("status").set("Banido pelo Admin");
+     
      io.to(dadosAcao.email).emit('ordem_de_bloqueio');
      io.to(dadosAcao.email + '_espiando').emit('ordem_de_bloqueio');
   });
 
   socket.on('admin_desbanir_cliente', (idNode) => {
      console.log("😇 Perdoando: " + idNode);
-     // 1. Apaga o Ban do Firebase, permitindo o cara logar amanhã
-     if (serviceAccount) db.ref("Usuarios").child(idNode).child("status").set("Ativo");
+     if (db) db.ref("Usuarios").child(idNode).child("status").set("Ativo");
   });
 
   // ==========================================
