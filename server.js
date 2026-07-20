@@ -2,37 +2,28 @@ const express = require('express');
 const http = require('http');
 const { Server } = require("socket.io");
 const admin = require("firebase-admin");
-const fs = require('fs');
 
-// 1. INICIALIZA O COFRE DO FIREBASE
 let serviceAccount;
 
-// O Render esconde arquivos secretos na pasta /etc/secrets/
-const caminhoRender = '/etc/secrets/firebase-key.json';
-const caminhoLocal = './firebase-key.json'; // Pra caso você rode no PC depois
-
-try {
-    if (fs.existsSync(caminhoRender)) {
-        serviceAccount = require(caminhoRender);
-    } else if (fs.existsSync(caminhoLocal)) {
-        serviceAccount = require(caminhoLocal);
-    } else {
-        console.error("⚠️ Arquivo firebase-key.json não encontrado no cofre do Render!");
+// 1. LÊ A CHAVE DIRETO DA MEMÓRIA DO RENDER (À PROVA DE FALHAS)
+if (process.env.FIREBASE_JSON) {
+    try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_JSON);
+    } catch (error) {
+        console.error("⚠️ Erro ao ler o texto do Firebase nas variáveis:", error);
     }
-} catch (error) {
-    console.error("⚠️ Erro ao ler a chave do Firebase:", error);
 }
 
 let db;
 if (serviceAccount) {
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
-        databaseURL: "https://seofast-3b0ab-default-rtdb.firebaseio.com" // O link do seu banco!
+        databaseURL: "https://seofast-3b0ab-default-rtdb.firebaseio.com" // Seu banco!
     });
     db = admin.database();
     console.log("✅ Servidor Master conectado ao Firebase com sucesso!");
 } else {
-    console.log("❌ Rodando sem Firebase: Chave Mestra não encontrada.");
+    console.log("❌ Rodando sem Firebase: Chave Mestra não encontrada nas Variáveis de Ambiente.");
 }
 
 const app = express();
@@ -44,7 +35,7 @@ app.get('/', (req, res) => res.send('🚀 Servidor Master rodando com Integraç�
 // Guarda as informações misturadas (HD + RAM)
 let cacheUsuariosFirebase = {};
 
-// Fica de olho no Firebase se a conexão deu certo
+// Fica de olho no Firebase o tempo todo
 if (db) {
     db.ref("Usuarios").on("value", (snapshot) => {
         if (snapshot.exists()) {
@@ -80,9 +71,6 @@ function enviarPainelParaAdmin() {
 
 io.on('connection', (socket) => {
   
-  // ==========================================
-  // ÁREA DO CHEFE (Painel Web)
-  // ==========================================
   socket.on('entrar_admin', () => {
     socket.join('sala_dos_chefes');
     enviarPainelParaAdmin(); 
@@ -101,9 +89,6 @@ io.on('connection', (socket) => {
      if (db) db.ref("Usuarios").child(idNode).child("status").set("Ativo");
   });
 
-  // ==========================================
-  // ÁREA DO APP (Celular do Cliente)
-  // ==========================================
   socket.on('espiar_radar', (email) => {
     socket.join(email + '_espiando');
     const qtdOnline = io.sockets.adapter.rooms.get(email)?.size || 0;
