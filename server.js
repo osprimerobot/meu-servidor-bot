@@ -32,7 +32,6 @@ let cacheUsuarios = {};
 let cacheEmails = {};
 let aparelhosAtivos = new Set(); 
 
-// 🔥 VARIAVEL DA TRAVA GLOBAL
 let statusTravaGlobal = "";
 
 if (db) {
@@ -45,17 +44,14 @@ if (db) {
         enviarPainelAgrupado();
     });
     
-    // 🔥 FICA VIGIANDO O FIREBASE PARA SABER SE A TRAVA ESTÁ ATIVA
     db.ref("TravaGlobal_SeoFast").on("value", (snapshot) => {
         statusTravaGlobal = snapshot.val() || "";
         io.to('sala_dos_chefes').emit('atualizar_trava_global', statusTravaGlobal);
-        
-        // 🔥 A MÁGICA: Se a trava foi ativada, o servidor grita no megafone para TODOS os celulares!
         if (statusTravaGlobal !== "") {
             io.emit('ordem_trava_global_imediata', statusTravaGlobal);
         }
     });
-} // <-- 🔥 Adicionado o fechamento correto dessa chave aqui!
+} 
 
 function enviarPainelAgrupado() {
     let painelAgrupado = {};
@@ -68,6 +64,7 @@ function enviarPainelAgrupado() {
 
         if (!painelAgrupado[email]) {
             let limiteAtual = cacheEmails[emailLimpo] ? cacheEmails[emailLimpo].limite : 0;
+            // A contagem real lá no painel admin baseada nos motores ativos
             let room = io.sockets.adapter.rooms.get(email);
             
             painelAgrupado[email] = {
@@ -97,16 +94,12 @@ io.on('connection', (socket) => {
   socket.on('entrar_admin', () => {
     socket.join('sala_dos_chefes');
     enviarPainelAgrupado(); 
-    socket.emit('atualizar_trava_global', statusTravaGlobal); // Manda o status da trava ao logar
+    socket.emit('atualizar_trava_global', statusTravaGlobal); 
   });
 
   socket.on('admin_bloquear_cliente_com_motivo', (dados) => {
      if (db) db.ref("Usuarios").child(dados.id_node).child("status").set(dados.motivo);
-     
-     let pacoteMorte = {
-         alvo_id: dados.id_node,
-         motivo: dados.motivo
-     };
+     let pacoteMorte = { alvo_id: dados.id_node, motivo: dados.motivo };
      io.to(dados.email).emit('ordem_de_bloqueio', pacoteMorte);
      io.to(dados.email + '_espiando').emit('ordem_de_bloqueio', pacoteMorte);
   });
@@ -119,7 +112,6 @@ io.on('connection', (socket) => {
       if (db) db.ref("EmailsAutorizados").child(dados.email_limpo).child("limite").set(parseInt(dados.novo_limite));
   });
 
-  // 🔥 EVENTOS DA TRAVA GLOBAL 🔥
   socket.on('admin_travar_global', (motivo) => {
       if (db) db.ref("TravaGlobal_SeoFast").set(motivo);
   });
@@ -128,88 +120,60 @@ io.on('connection', (socket) => {
       if (db) db.ref("TravaGlobal_SeoFast").set("");
   });
 
+  // 🔥 1. APENAS ENTRA NA CONTA COMO OUVINTE (NÃO CONTA COMO MOTOR LIGADO)
   socket.on('espiar_radar', (email) => {
     socket.join(email + '_espiando');
     const qtd = io.sockets.adapter.rooms.get(email)?.size || 0;
     socket.emit('atualizar_qtd', qtd);
   });
 
-  // 🔥 O BARRADOR DA PORTA DE ENTRADA E SINCRONIZADOR GLOBAL 🔥
   socket.on('entrar_sala_limite', (dados) => {
     let email = typeof dados === 'string' ? dados : dados.email;
-    let id_node = typeof dados === 'string' ? null : dados.id_node;
-    let emailLimpo = email.replace(/\./g, '_');
-    
-    let limiteDaConta = cacheEmails[emailLimpo] && cacheEmails[emailLimpo].limite !== undefined ? parseInt(cacheEmails[emailLimpo].limite) : 0;
-    let sala = io.sockets.adapter.rooms.get(email);
-    let qtdAtual = sala ? sala.size : 0;
-    let jaEstaNaSala = sala ? sala.has(socket.id) : false;
-
-    if (!jaEstaNaSala && qtdAtual >= limiteDaConta) {
-        socket.emit('ordem_trava_global_imediata', `Limite máximo de ${limiteDaConta} tela(s) excedido!`);
-        return; 
-    }
-    
-    socket.join(email);
-    socket.email = email;
-    if (id_node) socket.id_node = id_node;
-
-    // 🔥 AVISA TODO MUNDO QUE ALGUÉM ENTROU (E ATUALIZA A TELA PRA ELES)
-    const qtdAtualizada = io.sockets.adapter.rooms.get(email).size;
-    io.to(email).emit('atualizar_qtd', qtdAtualizada);
-    io.to(email + '_espiando').emit('atualizar_qtd', qtdAtualizada);
-    
-    enviarPainelAgrupado();
+    socket.join(email + '_espiando'); 
+    const qtd = io.sockets.adapter.rooms.get(email)?.size || 0;
+    socket.emit('atualizar_qtd', qtd);
   });
 
-  // 🔥 O LEÃO DE CHÁCARA DO MOTOR 🔥
+  // 🔥 2. AQUI O CARA CLICOU NO PLAY DO APP (AQUI CONTA NO LIMITE)
   socket.on('ligar_motor', (dados) => {
     let email = typeof dados === 'string' ? dados : dados.email;
     let id_node = typeof dados === 'string' ? null : dados.id_node;
-
     let emailLimpo = email.replace(/\./g, '_');
     
-    // 1. Descobre o limite de telas para este e-mail lá do Firebase
     let limiteDaConta = cacheEmails[emailLimpo] && cacheEmails[emailLimpo].limite !== undefined 
         ? parseInt(cacheEmails[emailLimpo].limite) 
         : 0;
 
-    // 2. Conta quantos já estão conectados logados agora
     let sala = io.sockets.adapter.rooms.get(email);
     let qtdAtual = sala ? sala.size : 0;
     let jaEstaNaSala = sala ? sala.has(socket.id) : false;
 
-    // 3. 🔥 BARRANDO OS ESPERTINHOS 🔥
+    // SE ELE TENTAR LIGAR E TIVER CHEIO, MANDA UM AVISO SÓ PRA ELE DESLIGAR, SEM DESLOGAR DA CONTA!
     if (!jaEstaNaSala && qtdAtual >= limiteDaConta) {
-        console.log(`🚫 BARRADO: ${email} tentou abrir a tela ${qtdAtual + 1} (Limite: ${limiteDaConta})`);
-        socket.emit('ordem_trava_global_imediata', `Limite máximo de ${limiteDaConta} tela(s) excedido!`);
+        socket.emit('erro_limite_motor', `Limite de ${limiteDaConta} tela(s) rodando simultaneamente atingido!`);
         return; 
     }
 
-    // 4. Se tem vaga no limite, entra normalmente
     socket.join(email);
     socket.email = email;
-    
     if (id_node) {
         socket.id_node = id_node;
         aparelhosAtivos.add(id_node);
     }
 
-    // 🔥 AVISA TODO MUNDO QUE O MOTOR LIGOU
+    // AVISA TODO MUNDO QUE ALGUÉM LIGOU
     const qtdAtualizada = io.sockets.adapter.rooms.get(email).size;
-    io.to(email).emit('atualizar_qtd', qtdAtualizada);
     io.to(email + '_espiando').emit('atualizar_qtd', qtdAtualizada);
     enviarPainelAgrupado();
   });
 
+  // 🔥 3. AQUI O CARA DESLIGOU O BOT 
   socket.on('desligar_motor', () => {
     if (socket.email) {
         socket.leave(socket.email); 
         if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
         
-        // 🔥 AVISA TODO MUNDO QUE O MOTOR DESLIGOU
         const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
-        io.to(socket.email).emit('atualizar_qtd', qtd);
         io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
         enviarPainelAgrupado();
         delete socket.email; 
@@ -219,12 +183,13 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (socket.email) {
         if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
-
-        // 🔥 AVISA TODO MUNDO SE ALGUEM CAIU OU FOI EXPULSO
-        const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
-        io.to(socket.email).emit('atualizar_qtd', qtd);
-        io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
-        enviarPainelAgrupado();
+        
+        // Dá um tempinho e avisa todo mundo que caiu
+        setTimeout(() => {
+            const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
+            io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
+            enviarPainelAgrupado();
+        }, 150);
     }
   });
 });
