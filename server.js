@@ -125,7 +125,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('admin_destravar_global', () => {
-      // 🔥 AQUI ESTÁ A CORREÇÃO: Usando .set("") em vez de .remove()
       if (db) db.ref("TravaGlobal_SeoFast").set("");
   });
 
@@ -135,7 +134,35 @@ io.on('connection', (socket) => {
     socket.emit('atualizar_qtd', qtd);
   });
 
-  // 🔥 O LEÃO DE CHÁCARA ENTRA AQUI 🔥
+  // 🔥 O BARRADOR DA PORTA DE ENTRADA E SINCRONIZADOR GLOBAL 🔥
+  socket.on('entrar_sala_limite', (dados) => {
+    let email = typeof dados === 'string' ? dados : dados.email;
+    let id_node = typeof dados === 'string' ? null : dados.id_node;
+    let emailLimpo = email.replace(/\./g, '_');
+    
+    let limiteDaConta = cacheEmails[emailLimpo] && cacheEmails[emailLimpo].limite !== undefined ? parseInt(cacheEmails[emailLimpo].limite) : 0;
+    let sala = io.sockets.adapter.rooms.get(email);
+    let qtdAtual = sala ? sala.size : 0;
+    let jaEstaNaSala = sala ? sala.has(socket.id) : false;
+
+    if (!jaEstaNaSala && qtdAtual >= limiteDaConta) {
+        socket.emit('ordem_trava_global_imediata', `Limite máximo de ${limiteDaConta} tela(s) excedido!`);
+        return; 
+    }
+    
+    socket.join(email);
+    socket.email = email;
+    if (id_node) socket.id_node = id_node;
+
+    // 🔥 AVISA TODO MUNDO QUE ALGUÉM ENTROU (E ATUALIZA A TELA PRA ELES)
+    const qtdAtualizada = io.sockets.adapter.rooms.get(email).size;
+    io.to(email).emit('atualizar_qtd', qtdAtualizada);
+    io.to(email + '_espiando').emit('atualizar_qtd', qtdAtualizada);
+    
+    enviarPainelAgrupado();
+  });
+
+  // 🔥 O LEÃO DE CHÁCARA DO MOTOR 🔥
   socket.on('ligar_motor', (dados) => {
     let email = typeof dados === 'string' ? dados : dados.email;
     let id_node = typeof dados === 'string' ? null : dados.id_node;
@@ -155,10 +182,8 @@ io.on('connection', (socket) => {
     // 3. 🔥 BARRANDO OS ESPERTINHOS 🔥
     if (!jaEstaNaSala && qtdAtual >= limiteDaConta) {
         console.log(`🚫 BARRADO: ${email} tentou abrir a tela ${qtdAtual + 1} (Limite: ${limiteDaConta})`);
-        
-        // Dá o grito do megafone SÓ na orelha desse aparelho intruso!
         socket.emit('ordem_trava_global_imediata', `Limite máximo de ${limiteDaConta} tela(s) excedido!`);
-        return; // ⛔ Corta aqui! Ele não entra na sala e o bot dele não farma.
+        return; 
     }
 
     // 4. Se tem vaga no limite, entra normalmente
@@ -170,6 +195,7 @@ io.on('connection', (socket) => {
         aparelhosAtivos.add(id_node);
     }
 
+    // 🔥 AVISA TODO MUNDO QUE O MOTOR LIGOU
     const qtdAtualizada = io.sockets.adapter.rooms.get(email).size;
     io.to(email).emit('atualizar_qtd', qtdAtualizada);
     io.to(email + '_espiando').emit('atualizar_qtd', qtdAtualizada);
@@ -181,6 +207,7 @@ io.on('connection', (socket) => {
         socket.leave(socket.email); 
         if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
         
+        // 🔥 AVISA TODO MUNDO QUE O MOTOR DESLIGOU
         const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
         io.to(socket.email).emit('atualizar_qtd', qtd);
         io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
@@ -193,6 +220,7 @@ io.on('connection', (socket) => {
     if (socket.email) {
         if (socket.id_node) aparelhosAtivos.delete(socket.id_node);
 
+        // 🔥 AVISA TODO MUNDO SE ALGUEM CAIU OU FOI EXPULSO
         const qtd = io.sockets.adapter.rooms.get(socket.email)?.size || 0;
         io.to(socket.email).emit('atualizar_qtd', qtd);
         io.to(socket.email + '_espiando').emit('atualizar_qtd', qtd);
