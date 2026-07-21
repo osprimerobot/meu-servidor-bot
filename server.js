@@ -135,10 +135,33 @@ io.on('connection', (socket) => {
     socket.emit('atualizar_qtd', qtd);
   });
 
+  // 🔥 O LEÃO DE CHÁCARA ENTRA AQUI 🔥
   socket.on('ligar_motor', (dados) => {
     let email = typeof dados === 'string' ? dados : dados.email;
     let id_node = typeof dados === 'string' ? null : dados.id_node;
 
+    let emailLimpo = email.replace(/\./g, '_');
+    
+    // 1. Descobre o limite de telas para este e-mail lá do Firebase
+    let limiteDaConta = cacheEmails[emailLimpo] && cacheEmails[emailLimpo].limite !== undefined 
+        ? parseInt(cacheEmails[emailLimpo].limite) 
+        : 0;
+
+    // 2. Conta quantos já estão conectados logados agora
+    let sala = io.sockets.adapter.rooms.get(email);
+    let qtdAtual = sala ? sala.size : 0;
+    let jaEstaNaSala = sala ? sala.has(socket.id) : false;
+
+    // 3. 🔥 BARRANDO OS ESPERTINHOS 🔥
+    if (!jaEstaNaSala && qtdAtual >= limiteDaConta) {
+        console.log(`🚫 BARRADO: ${email} tentou abrir a tela ${qtdAtual + 1} (Limite: ${limiteDaConta})`);
+        
+        // Dá o grito do megafone SÓ na orelha desse aparelho intruso!
+        socket.emit('ordem_trava_global_imediata', `Limite máximo de ${limiteDaConta} tela(s) excedido!`);
+        return; // ⛔ Corta aqui! Ele não entra na sala e o bot dele não farma.
+    }
+
+    // 4. Se tem vaga no limite, entra normalmente
     socket.join(email);
     socket.email = email;
     
@@ -147,9 +170,9 @@ io.on('connection', (socket) => {
         aparelhosAtivos.add(id_node);
     }
 
-    const qtd = io.sockets.adapter.rooms.get(email).size;
-    io.to(email).emit('atualizar_qtd', qtd);
-    io.to(email + '_espiando').emit('atualizar_qtd', qtd);
+    const qtdAtualizada = io.sockets.adapter.rooms.get(email).size;
+    io.to(email).emit('atualizar_qtd', qtdAtualizada);
+    io.to(email + '_espiando').emit('atualizar_qtd', qtdAtualizada);
     enviarPainelAgrupado();
   });
 
